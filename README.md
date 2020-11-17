@@ -2,7 +2,7 @@
 This code implements the Attention-driven Navigation Agent (ANA) for target-driven visual navigation. It is used for experimenting with the AI2-Thor framework under different settings.
 
 ### Reference
-If you use our code or data, please cite our paper:
+If you use our code, please cite our paper:
 ```
 TBD
 ```
