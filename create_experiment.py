@@ -13,8 +13,17 @@ BEDROOM_ID = 300
 BATHROOM_ID = 400
 
 names = []
-TRAIN_SPLIT = (1, 11)
-TEST_SPLIT = (22, 27)
+
+# Splits for evaluation in environments with known semantics
+TRAIN_SPLIT = (1, 21)
+VAL_SPLIT = [21,23,25,27,29]
+TEST_SPLIT = [22,24,26,28,30]
+
+
+# Splits for evaluation in environments with unknown semantics
+TRAIN_SPLIT_UNK = (1, 11)
+VAL_SPLIT_UNK = [12,13,14,15,16]
+TEST_SPLIT_UNK = [22,23,24,25,26]
 
 
 KITCHEN_OBJECT_CLASS_LIST_TRAIN = [
@@ -90,8 +99,6 @@ if __name__ == '__main__':
     parser.add_argument('--train_range', nargs=2, default=TRAIN_SPLIT,
                         help='train scene range Ex : 1 11')
 
-    parser.add_argument('--eval_range', nargs=2, default=TEST_SPLIT,
-                        help='train scene range Ex : 22 27')
     parser.add_argument('--method', type=str, default="ana",
                         help='Method to use Ex : ana')
     parser.add_argument('--reward', type=str, default="soft_goal",
@@ -101,25 +108,32 @@ if __name__ == '__main__':
 
     parser.add_argument('--train_room', type=str, default='kitchen_bedroom')
 
-
-    parser.add_argument('--eval_savn', action="store_true")
+    parser.add_argument('--testing', action='store_true')
 
     args = vars(parser.parse_args())
 
 
-    if not args['eval_savn']:
-        if args['train_room'] == 'kitchen_bedroom':
-            SCENES_TRAINING = [KITCHEN_ID, BEDROOM_ID]
-            SCENES_EVAL = [LIVINGROOM_ID, BATHROOM_ID] if args['eval_unknown'] else [KITCHEN_ID, BEDROOM_ID]
-        elif args['train_room'] == 'livingroom_bathroom':
-            SCENES_TRAINING = [LIVINGROOM_ID, BATHROOM_ID]
-            SCENES_EVAL = [KITCHEN_ID, BEDROOM_ID] if args['eval_unknown'] else [LIVINGROOM_ID, BATHROOM_ID]
-
-    else:
+    if not args['eval_unknown']:
         SCENES_TRAINING = [LIVINGROOM_ID, BATHROOM_ID,KITCHEN_ID,BEDROOM_ID]
         SCENES_EVAL = [LIVINGROOM_ID, BATHROOM_ID,KITCHEN_ID,BEDROOM_ID]
-        args["train_range"] = (1, 21)
-        TEST_SPLIT_SAVN = [22,24,26,28,30]
+        args["train_range"] = TRAIN_SPLIT
+        if args['testing']:
+            eval_range = TEST_SPLIT
+        else:
+            eval_range = VAL_SPLIT
+    else:
+        if args['train_room'] == 'kitchen_bedroom':
+            SCENES_TRAINING = [KITCHEN_ID, BEDROOM_ID]
+            SCENES_EVAL = [LIVINGROOM_ID, BATHROOM_ID]
+        elif args['train_room'] == 'livingroom_bathroom':
+            SCENES_TRAINING = [LIVINGROOM_ID, BATHROOM_ID]
+            SCENES_EVAL = [KITCHEN_ID, BEDROOM_ID]
+        args["train_range"] = TRAIN_SPLIT_UNK
+
+        if args['testing']:
+            eval_range = TEST_SPLIT_UNK
+        else:
+            eval_range = VAL_SPLIT_UNK
 
 
     str_range = list(args["train_range"])
@@ -127,13 +141,9 @@ if __name__ == '__main__':
         str_range[i] = int(s)
     args["train_range"] = str_range
 
-    str_range = list(args["eval_range"])
-    for i, s in enumerate(str_range):
-        str_range[i] = int(s)
-    args["eval_range"] = str_range
     data = {}
 
-    scene_tasks = { KITCHEN_ID: KITCHEN_OBJECT_CLASS_LIST_TRAIN, 
+    scene_tasks = { KITCHEN_ID: KITCHEN_OBJECT_CLASS_LIST_TRAIN,
                     LIVINGROOM_ID: LIVING_ROOM_OBJECT_CLASS_LIST_TRAIN,
                     BEDROOM_ID: BEDROOM_OBJECT_CLASS_LIST_TRAIN,
                     BATHROOM_ID: BATHROOM_OBJECT_CLASS_LIST_TRAIN}
@@ -173,7 +183,7 @@ if __name__ == '__main__':
                               for obj in obj_available[obj_available_mask == True]]
 
     if args['eval_unknown']:
-        scene_tasks = { KITCHEN_ID: KITCHEN_OBJECT_CLASS_LIST_EVAL, 
+        scene_tasks = { KITCHEN_ID: KITCHEN_OBJECT_CLASS_LIST_EVAL,
                     LIVINGROOM_ID: LIVING_ROOM_OBJECT_CLASS_LIST_EVAL,
                     BEDROOM_ID: BEDROOM_OBJECT_CLASS_LIST_EVAL,
                     BATHROOM_ID: BATHROOM_OBJECT_CLASS_LIST_EVAL}
@@ -184,7 +194,6 @@ if __name__ == '__main__':
     evaluation_set = dict()
     for idx_scene, scene in enumerate(SCENES_EVAL):
         evaluation_set[scene] = list()
-        eval_range = range(*args['eval_range']) if not args['eval_savn'] else TEST_SPLIT_SAVN
         for t in eval_range:
             name = "FloorPlan" + str(scene + t)
             evaluation[name] = [

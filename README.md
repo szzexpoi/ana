@@ -28,13 +28,17 @@ python create_dataset.py
 If you are working on a headless server, you may find [this guide](https://medium.com/@etendue2013/how-to-run-ai2-thor-simulation-fast-with-google-cloud-platform-gcp-c9fcde213a4a) useful.
 
 ### Training
-To train our model, you need to first generate a Json file using `create_experiment.py`, which specifies the experiment settings. Following the Spatial Context paper, for experiments in our main paper, we train the model on two room types, specified by the `train_room` argument (`kitchen_bedroom` or `livingroom_bathroom`). By default, the code will generate the Json file for evaluation in known environments. For evaluation in unknown environments from the other two room types, simply append an additional argument:
+To train our model, you need to first generate a Json file using `create_experiment.py`, which specifies the experiment settings for different evaluation criteria. For evaluation in unseen environments with known semantics, simply call:
 ```
-python create_experiment.py --eval_unknown
+python create_experiment.py
 ```
-We also tested our method on the settings discussed in the [SAVN](https://arxiv.org/abs/1812.00971) paper:
+The code will use environments from all room types for training and evaluation. For evaluation in unseen environments with unknown semantics, append an additional argument `eval_unknown` and specify the room types for training with `train_room` argument (`kitchen_bedroom` or `livingroom_bathroom`):
 ```
-python create_experiment.py --eval_savn
+python create_experiment.py --eval_unknown --train_room kitchen_bedroom
+```
+By default, the evaluation is carried out on the validation splits. To generate results on the test splits, append the argument `testing`:
+```
+python create_experiment.py --testing
 ```
 
 After obtaining the Json file `param.json`, place it in the directory (e.g., `EXP_DIR`) where you want to save the checkpoints and log files, and start training:
@@ -50,9 +54,12 @@ tensorboard --logdir=EXP_DIR/log/TIME/
 ### Evaluation
 Since the evaluation settings have already been specified in the Json file, evaluating our method is straightforward:
 ```
-python eval.py --checkpoint_path EXP_DIR/checkpoints --exp EXP_DIR/param.json
+python eval.py --checkpoint_path EXP_DIR/checkpoints --exp EXP_DIR/param.json --eval_type val_known
 ```
-The code will generate the results for all checkpoints saved in the directory. Our method tends to have a faster convergence speed than the original Spatial Context model, and the best performance is usually obtained after 4-8 millions iterations of training.
+The code will generate the validation results for all checkpoints saved in the directory. After selecting the best checkpoint, copy the corresponding weights to another directory and compute the test results:
+```
+python eval.py --checkpoint_path EXP_DIR/checkpoint_test --exp EXP_DIR/param.json --eval_type test_known
+```
 
 We also provide code for visualizing the attention computed by our method. To generate the corresponding videos, comment/uncomment the following lines:
 ```
@@ -62,7 +69,7 @@ line 89/90 and line 115/116, agent/method/similarity_grid.py
 ```
 and run the evaluation:
 ```
-python eval.py --checkpoint_path EXP_DIR/checkpoints --exp EXP_DIR/param.json --show
+python eval.py --checkpoint_path EXP_DIR/checkpoints --exp EXP_DIR/param.json --eval_type val_known --show
 ```
 
 ### Pre-trained Model

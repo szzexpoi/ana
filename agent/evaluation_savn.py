@@ -111,21 +111,33 @@ def write_text(img, text, pos):
     text_width, text_height = cv2.getTextSize(text, font, fontScale, lineType)[0]
     return img, text_width, text_height
 
+def overlay_heatmap(img,att,cmap=plt.cm.jet):
+    gamma = 1.0
+    att[att<0.3] = 0.01
+    att = cv2.blur(att,(35,35))
+    colorized = cmap(np.uint8(att*255))
+    alpha = 0.7
+    # overlaid = np.uint8(img*(1-alpha)+colorized[:,:,2::-1]*255*alpha) # for BGR
+    overlaid = np.uint8(img*(1-alpha)+colorized[:,:,:3]*255*alpha) # for RGB
+    return overlaid
 
-def create_img(target, obs, obs_feature, word_embedding, simi_grid, action=None):
+def create_img(target, obs, obs_feature, word_embedding, simi_grid, attention, action=None):
     padding = 3
-    # base_img = np.zeros((720, 1280, 3), dtype=np.uint8)
-    base_img = np.zeros((720, 640, 3), dtype=np.uint8)
+    base_img = np.zeros((720, 1280, 3), dtype=np.uint8)
 
     """OBSERVATION
     """
     # Set obs width and height
     width_obs, height_obs = 400, 300
+
     #  Set obs position
-    # pos_width_obs, pos_height_obs = 650, 200
-    pos_width_obs, pos_height_obs = padding*2, 200
+    pos_width_obs, pos_height_obs = int(width_obs*1.5)+padding*4, 200
 
     obs = cv2.resize(obs, dsize=(int(width_obs*1.5), int(height_obs*1.5)))
+    attention = cv2.resize(attention, dsize=(int(width_obs*1.5), int(height_obs*1.5)))
+    simi_grid = cv2.resize(simi_grid, dsize=(int(width_obs*1.5), int(height_obs*1.5)))
+    attention /= attention.max()
+    att_obs = overlay_heatmap(obs,attention)
 
     # Set obs width and height
     height_obs, width_obs, _ = obs.shape
@@ -133,13 +145,25 @@ def create_img(target, obs, obs_feature, word_embedding, simi_grid, action=None)
     base_img, text_width, text_height = write_text(
         base_img, "Observation", (200+pos_width_obs, pos_height_obs))
 
-    # Merge obs in canva
+    # # Merge obs in canva
     base_img[pos_height_obs+text_height:pos_height_obs+height_obs+text_height+padding*2,
              pos_width_obs:pos_width_obs+width_obs+padding*2, :] = np.pad(obs, ((padding, padding), (padding, padding), (0, 0)), 'constant', constant_values=255)
 
+    # Display similarity grid instead of observation
+    # simi_grid = (simi_grid - np.min(simi_grid))/(np.max(simi_grid) - np.min(simi_grid))
+    # simi_grid =  overlay_heatmap(obs,simi_grid)
+    # base_img[pos_height_obs+text_height:pos_height_obs+height_obs+text_height+padding*2,
+    #          pos_width_obs:pos_width_obs+width_obs+padding*2, :] = np.pad(simi_grid, ((padding, padding), (padding, padding), (0, 0)), 'constant', constant_values=255)
+
+
+    # Merge attention in canvas
+    base_img[pos_height_obs+text_height:pos_height_obs+height_obs+text_height+padding*2,
+             padding*2:pos_width_obs, :] = np.pad(att_obs, ((padding, padding), (padding, padding), (0, 0)), 'constant', constant_values=255)
+
 
     """
-    # OBSERVATION FEATURE
+    #OBSERVATION FEATURE
+
     # Set observation feature position
     pos_width_feat, pos_height_feat = 100, 100
 
@@ -161,6 +185,7 @@ def create_img(target, obs, obs_feature, word_embedding, simi_grid, action=None)
              pos_width_feat:pos_width_feat+width_feat+padding*2, :] = np.pad(obs_feature, ((padding, padding), (padding, padding), (0, 0)), 'constant', constant_values=255)
 
     # WORD EMBEDDING FEATURE
+
     # Set observation feature position
     pos_width_we, pos_height_we = 100, 250
 
@@ -203,10 +228,9 @@ def create_img(target, obs, obs_feature, word_embedding, simi_grid, action=None)
 
     base_img[pos_height_grid+text_height:pos_height_grid+text_height+height_grid+padding*2,
              pos_width_grid:pos_width_grid+width_grid+padding*2, :] = np.pad(simi_grid, ((padding, padding), (padding, padding), (0, 0)), 'constant', constant_values=255)
+    """
 
-    """
-    """
-    TARGET NAME
+    """TARGET NAME
     """
     base_img, text_width, text_height = write_text(
         base_img, "TARGET : " + target, (200+pos_width_obs, pos_height_obs-100))
@@ -238,18 +262,19 @@ class Logger(object):
     def __del__(self):
         self.log.close()
 
-class Evaluation:
+class Evaluation_savn:
     def __init__(self, config):
         self.config = config
         self.method = config['method']
         gpu_id = get_first_free_gpu(2000)
         if gpu_id is None:
-            print("You need at least 2Go of GPU RAM")
+            print("You need at least 2G of GPU RAM")
             exit()
         self.device = torch.device("cuda:" + str(gpu_id))
         if self.method != "random":
             self.shared_net = SharedNetwork(
                 self.config['method'], self.config.get('mask_size', 5)).to(self.device)
+
             self.scene_net = SceneSpecificNetwork_att2act(
                 self.config['action_size']).to(self.device)
 
@@ -262,7 +287,7 @@ class Evaluation:
 
     @staticmethod
     def load_checkpoints(config, fail=True):
-        evaluation = Evaluation(config)
+        evaluation = Evaluation_savn(config)
         checkpoint_path = config.get(
             'checkpoint_path', 'model/checkpoint-{checkpoint}.pth')
 
@@ -353,15 +378,14 @@ class Evaluation:
             os.makedirs(directory)
         for idx_name, idx in enumerate(ind_list):
             # Create video to save
-            # height, width, layers = 720, 1280, 3
-            height, width, layers = 720, 640, 3
+            height, width, layers = 720, 1280, 3
             filename = os.path.join(directory, scene_scope + '_' +
                                         task_scope['object'] + '_' +
                                         names_video[idx_name] + '_' +
                                         str(ep_lengths_succeed[idx]))
             video_name = os.path.join(filename + '.avi')
             text_name = os.path.join(filename + '.json')
-            FPS = 1 # originally 5
+            FPS = 5
             video = cv2.VideoWriter(
                 video_name, cv2.VideoWriter_fourcc(*"MJPG"), FPS, (width, height))
             # Retrieve start position
@@ -371,15 +395,112 @@ class Evaluation:
             # Set start position
             env.current_state_id = state_id_best
             for a in ep_actions_succeed[idx]:
-                # state, x_processed, object_mask, hidden = self.method_class.extract_input(
-                #     env, torch.device("cpu"))
                 state, x_processed, object_mask = self.method_class.extract_input(
                     env, torch.device("cpu"))
                 x_processed = x_processed.view(-1, 1).numpy()
                 object_mask = object_mask.squeeze().unsqueeze(2).numpy()
                 object_mask = np.flip(np.rot90(object_mask), axis=0)
                 img = create_img(task_scope['object'], env.observation, x_processed,
-                                    np.zeros((300, 1)), object_mask, a)
+                                    np.zeros((300, 1)), object_mask)
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                video.write(img)
+                env.step(a)
+            for i in range(10):
+                video.write(img)
+            video.release()
+
+            data = {}
+            data['start'] = ep_start_succeed[idx]
+            data['stop'] = env.current_state_id
+            data['action'] = [env.acts[i] for i in ep_actions_succeed[idx]]
+            data['object_visible'] = [k.split("|")[0] for k in env.boudingbox.keys()]
+            round_mask = np.squeeze(np.around(object_mask,2)).tolist()
+
+            def fmt(v):
+                return "%.2f" % (v,)
+            vecfmt = np.vectorize(fmt)
+
+            data['object_mask'] = [NoIndent(e) for e in vecfmt(round_mask).tolist()]
+
+            with open(text_name, 'w') as outfile:
+                json.dump(data, outfile, cls=MyEncoder, sort_keys=True, indent=4)
+
+    def save_video_att(self, ep_lengths, ep_actions, ep_att, ep_start, ind_succ_or_fail_ep, chk_id, env, scene_scope, task_scope, success=True):
+        # Find episode based on episode length
+        if not ind_succ_or_fail_ep:
+            return
+        ep_lengths = np.array(ep_lengths)
+        sorted_ep_lengths = np.sort(ep_lengths[ind_succ_or_fail_ep])
+        ep_lengths_succeed = ep_lengths[ind_succ_or_fail_ep]
+        ep_actions_succeed = np.array(ep_actions)[ind_succ_or_fail_ep]
+        ep_att_succeed = np.array(ep_att)[ind_succ_or_fail_ep]
+        ep_start_succeed = np.array(ep_start)[ind_succ_or_fail_ep]
+
+        ind_list = []
+        names_video = []
+        if success:
+            # Best is the first episode in the sorted list but we want more than 5 step
+            index_best = 0
+            for idx, ep_len in enumerate(sorted_ep_lengths):
+                if ep_len >= 5:
+                    index_best = idx
+                    break
+            index_best = np.where(
+                ep_lengths_succeed == sorted_ep_lengths[index_best])
+            index_best = index_best[0][0]
+            # print("Best", ep_lengths_succeed[index_best])
+
+            # Worst is the last episode in the sorted list
+            index_worst = np.where(
+                ep_lengths_succeed == sorted_ep_lengths[-1])
+            index_worst = index_worst[0][0]
+            # print("Worst", ep_lengths_succeed[index_worst])
+
+            # Median is half the array size
+            index_median = np.where(
+                ep_lengths_succeed == sorted_ep_lengths[len(sorted_ep_lengths)//2])
+            # Extract index
+            index_median = index_median[0][0]
+            # print("Median", ep_lengths_succeed[index_median])
+
+            names_video = ['best', 'median', 'worst']
+            ind_list = [index_best, index_median, index_worst]
+        else:
+            ind_list = [i for i in range(len(ind_succ_or_fail_ep))]
+            names_video = ['Fail_' + str(i) for i in range(len(ind_succ_or_fail_ep))]
+
+        # Create dir if not exisiting
+        directory = os.path.join(
+            self.config['base_path'], 'video', str(chk_id))
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        for idx_name, idx in enumerate(ind_list):
+            # Create video to save
+            height, width, layers = 720, 1280, 3
+            filename = os.path.join(directory, scene_scope + '_' +
+                                        task_scope['object'] + '_' +
+                                        names_video[idx_name] + '_' +
+                                        str(ep_lengths_succeed[idx]))
+            video_name = os.path.join(filename + '.avi')
+            text_name = os.path.join(filename + '.json')
+            FPS = 1
+            video = cv2.VideoWriter(
+                video_name, cv2.VideoWriter_fourcc(*"MJPG"), FPS, (width, height))
+            # Retrieve start position
+            state_id_best = ep_start_succeed[idx]
+            env.reset()
+
+            # Set start position
+            env.current_state_id = state_id_best
+            for s_idx, a in enumerate(ep_actions_succeed[idx]):
+                state, x_processed, object_mask = self.method_class.extract_input(
+                    env, torch.device("cpu"))
+                x_processed = x_processed.view(-1, 1).numpy()
+                object_mask = object_mask.squeeze().unsqueeze(2).numpy()
+                object_mask = np.flip(np.rot90(object_mask), axis=0)
+                cur_att = ep_att_succeed[idx][s_idx]
+                img = create_img(task_scope['object'], env.observation, x_processed,
+                                    np.zeros((300, 1)), object_mask, cur_att, a)
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 video.write(img)
                 env.step(a)
@@ -408,9 +529,9 @@ class Evaluation:
         # Load policy network
         if self.method == 'word2vec' or self.method == 'word2vec_nosimi' or \
            self.method == 'word2vec_noconv' or self.method == 'word2vec_notarget' or \
-           self.method == 'aop_we' or self.method == 'word2vec_notarget_lstm' or \
+           self.method == 'gcn' or self.method == 'aop_we' or self.method == 'word2vec_notarget_lstm' or \
            self.method == 'word2vec_notarget_lstm_2layer' or self.method == 'word2vec_notarget_lstm_3layer' or \
-           self.method == 'word2vec_notarget_rnn' or self.method == 'word2vec_notarget_gru' or self.method=='ana':
+           self.method == 'word2vec_notarget_rnn' or self.method == 'word2vec_notarget_gru':
             self.method_class = SimilarityGrid(self.method)
         elif self.method == 'aop' or self.method == 'aop_we':
             self.method_class = AOP(self.method)
@@ -422,6 +543,7 @@ class Evaluation:
         # Init random seed
         random.seed(200)
         print(self.chk_numbers)
+
 
         for chk_id in self.chk_numbers:
             resultData = [chk_id]
@@ -435,24 +557,69 @@ class Evaluation:
             if self.method != "random":
                 self.restore()
                 self.next_checkpoint()
-            for scene_scope, items in self.config['task_list'].items():
-                if self.method != "random":
-                    scene_net = self.scene_net
-                    scene_net.eval()
-
-                network = Sequential(self.shared_net, scene_net)
-                network.eval()
-                scene_stats[scene_scope] = dict()
-                scene_stats[scene_scope]["length"] = list()
-                scene_stats[scene_scope]["spl"] = list()
-                scene_stats[scene_scope]["success"] = list()
-                scene_stats[scene_scope]["spl_long"] = list()
-                scene_stats[scene_scope]["success_long"] = list()
-                scene_stats[scene_scope]["failure_lost"] = list()
-                scene_stats[scene_scope]["failure_done_visible"] = list()
 
 
-                for task_scope in items:
+            if self.method != "random":
+                scene_net = self.scene_net
+                scene_net.eval()
+
+            network = Sequential(self.shared_net, scene_net)
+            network.eval()
+
+            room_type = ['kitchen','livingroom','bedroom','bathroom']
+            room_id = {'kitchen':['FloorPlan22','FloorPlan24','FloorPlan26','FloorPlan28','FloorPlan30'],
+                        'livingroom': ['FloorPlan222','FloorPlan224','FloorPlan226','FloorPlan228','FloorPlan230'],
+                        'bedroom': ['FloorPlan322','FloorPlan324','FloorPlan326','FloorPlan328','FloorPlan330'],
+                        'bathroom': ['FloorPlan422','FloorPlan424','FloorPlan426','FloorPlan428','FloorPlan430']}
+
+
+            # SPL results
+            spl_result = dict()
+            for cur_type in room_type + ['avg']:
+                spl_result[cur_type] = dict()
+                spl_result[cur_type]['count'] = 0
+                spl_result[cur_type]['spl'] = 0
+                spl_result[cur_type]['sr'] = 0
+
+            # SPL-5 results
+            spl_5_result = dict()
+            for cur_type in room_type  + ['avg']:
+                spl_5_result[cur_type] = dict()
+                spl_5_result[cur_type]['count'] = 0
+                spl_5_result[cur_type]['spl'] = 0
+                spl_5_result[cur_type]['sr'] = 0
+
+
+            # attention correlation
+            att_corr_result = dict()
+            att_corr_result['room_type'] = dict()
+            att_corr_result['floor_plan'] = dict()
+            for cur_type in room_type  + ['avg']:
+                att_corr_result['room_type'][cur_type] = dict()
+                att_corr_result['room_type'][cur_type]['count'] = 0
+                att_corr_result['room_type'][cur_type]['corr'] = 0
+
+            for cur_type in room_type:
+                for cur_room in room_id[cur_type]:
+                    att_corr_result['floor_plan'][cur_room] = dict()
+                    att_corr_result['floor_plan'][cur_room]['count'] = 0
+                    att_corr_result['floor_plan'][cur_room]['corr'] = 0
+
+
+            for cur_type in room_type:
+                cur_eval_candidate = []
+                num_episode = 250 # 250 episodes per room type
+
+                for scene_scope, items in self.config['task_list'].items():
+                    if scene_scope in room_id[cur_type]:
+                        cur_eval_candidate.append([scene_scope,items])
+
+                i_episode = 1
+                while i_episode <= num_episode:
+                    sample_room = np.random.randint(0,len(cur_eval_candidate),1)[0]
+                    sample_obj = np.random.randint(0,len(cur_eval_candidate[sample_room][1]),1)[0]
+                    scene_scope = cur_eval_candidate[sample_room][0]
+                    task_scope = cur_eval_candidate[sample_room][1][sample_obj]
 
                     env = THORDiscreteEnvironmentFile(scene_name=scene_scope,
                                                       method=self.method,
@@ -476,220 +643,84 @@ class Evaluation:
                     state_ids = list()
 
                     ep_fail_threshold = 300
-                    for i_episode in range(self.config['num_episode']):
-                        if not env.reset():
-                            continue
-                        terminal = False
-                        ep_reward = 0
-                        ep_collision = 0
-                        ep_t = 0
-                        actions = []
-                        ep_start.append(env.current_state_id)
-                        while not terminal:
-                            if self.method != "random":
-                                policy, value, state = self.method_class.forward_policy(
-                                    env, self.device, network)
-                                with torch.no_grad():
-                                    action = F.softmax(policy, dim=0).multinomial(
-                                        1).data.cpu().numpy()[0]
 
-                                if env.current_state_id not in state_ids:
-                                    state_ids.append(env.current_state_id)
-                            else:
-                                action = np.random.randint(env.action_size)
+                    if not env.reset():
+                        continue
 
-                            env.step(action)
-                            actions.append(action)
-                            ep_reward += env.reward
-                            terminal = env.terminal
+                    terminal = False
+                    ep_reward = 0
+                    ep_collision = 0
+                    ep_t = 0
+                    actions = []
+                    ep_start.append(env.current_state_id)
 
-                            if ep_t == ep_fail_threshold:
-                                break
-                            if env.collided:
-                                ep_collision += 1
-                            ep_t += 1
 
-                        ep_actions.append(actions)
-                        ep_lengths.append(ep_t)
-                        ep_rewards.append(ep_reward)
-                        ep_shortest_distance.append(env.shortest_path_terminal(
-                            ep_start[-1]))
-                        ep_collisions.append(ep_collision)
+                    while not terminal:
+                        if self.method != "random":
+                            policy, value, state = self.method_class.forward_policy(
+                                env, self.device, network)
 
-                        # Compute SPL
-                        spl = env.shortest_path_terminal(
-                            ep_start[-1])/ep_t
-                        ep_spl.append(spl)
+                            with torch.no_grad():
+                                action = F.softmax(policy, dim=0).multinomial(
+                                    1).data.cpu().numpy()[0]
 
-                        if self.config['reward'] == 'soft_goal':
-                            if env.success:
-                                ep_success.append(True)
-                            else:
-                                ep_success.append(False)
-
-                        elif ep_t < ep_fail_threshold:
-                            ep_success.append(True)
+                            if env.current_state_id not in state_ids:
+                                state_ids.append(env.current_state_id)
                         else:
-                            ep_success.append(False)
-                        log.write("episode #{} ends after {} steps".format(
-                            i_episode, ep_t))
+                            action = np.random.randint(env.action_size)
 
-                    ## Save succeed episode
-                    # Get indice of succeed episodes
-                    ind_succeed_ep = [
-                        i for (i, ep_suc) in enumerate(ep_success) if ep_suc]
-                    ep_rewards = np.array(ep_rewards)
-                    ep_lengths = np.array(ep_lengths)
-                    ep_collisions = np.array(ep_collisions)
-                    ep_spl = np.array(ep_spl)
-                    ep_start = np.array(ep_start)
+                        env.step(action)
+                        actions.append(action)
 
-                    log.write('evaluation: %s %s' % (scene_scope, task_scope))
-                    log.write('mean episode reward: %.2f' %
-                          np.mean(ep_rewards[ind_succeed_ep]))
-                    log.write('mean episode length: %.2f' %
-                          np.mean(ep_lengths[ind_succeed_ep]))
-                    log.write('mean episode collision: %.2f' %
-                          np.mean(ep_collisions[ind_succeed_ep]))
-                    ep_success_percent = (
-                        (len(ind_succeed_ep) / self.config['num_episode']) * 100)
-                    log.write('episode success: %.2f%% (%d / %d)' %
-                          (ep_success_percent, len(ind_succeed_ep), self.config['num_episode']))
 
-                    ep_spl_mean = np.sum(ep_spl[ind_succeed_ep]) / self.config['num_episode']
-                    log.write('episode SPL: %.3f' % ep_spl_mean)
+                        ep_reward += env.reward
+                        terminal = env.terminal
 
-                    # Stat on long path
-                    ind_succeed_far_start = []
-                    ind_far_start = []
-                    for i, short_dist in enumerate(ep_shortest_distance):
-                        if short_dist > 5:
-                            if ep_success[i]:
-                                ind_succeed_far_start.append(i)
-                            ind_far_start.append(i)
+                        if ep_t == ep_fail_threshold:
+                            break
+                        if env.collided:
+                            ep_collision += 1
+                        ep_t += 1
 
-                    nb_long_episode = len(ind_far_start)
-                    if nb_long_episode == 0:
-                        nb_long_episode = 1
-                    ep_success_long_percent = (
-                        (len(ind_succeed_far_start) / nb_long_episode) * 100)
-                    log.write('episode > 5 success: %.2f%%' %
-                          ep_success_long_percent)
-                    ep_spl_long_mean = np.sum(ep_spl[ind_succeed_far_start]) / nb_long_episode
-                    log.write('episode SPL > 5: %.3f' % ep_spl_long_mean)
-                    log.write('nb episode > 5: %d' % nb_long_episode)
+                    ep_actions.append(actions)
+                    ep_lengths.append(ep_t)
+                    ep_rewards.append(ep_reward)
+                    ep_shortest_distance.append(env.shortest_path_terminal(
+                        ep_start[-1]))
+                    ep_collisions.append(ep_collision)
 
-                    scene_stats[scene_scope]["length"].extend(
-                        ep_lengths[ind_succeed_ep])
-                    scene_stats[scene_scope]["spl"].append(ep_spl_mean)
-                    scene_stats[scene_scope]["success"].append(
-                        ep_success_percent)
-                    scene_stats[scene_scope]["spl_long"].append(
-                        ep_spl_long_mean)
-                    scene_stats[scene_scope]["success_long"].append(
-                        ep_success_long_percent)
+                    # Compute SPL
+                    spl = env.shortest_path_terminal(
+                        ep_start[-1])/ep_t
 
-                    tmpData = [np.mean(
-                        ep_rewards), np.mean(ep_lengths), np.mean(ep_collisions), ep_success_percent, ep_spl, ind_succeed_ep]
-                    resultData = np.hstack((resultData, tmpData))
+                    if env.success:
+                        spl_result[cur_type]['sr'] += 1
+                        spl_result[cur_type]['spl'] += spl
+                        spl_result['avg']['sr'] += 1
+                        spl_result['avg']['spl'] += spl
+                    spl_result[cur_type]['count'] += 1
+                    spl_result['avg']['count'] += 1
 
-                    # Show best episode from evaluation
-                    # We will log.write the best (lowest step), median, and worst
-                    if show:
-                        self.save_video(ep_lengths, ep_actions, ep_start, ind_succeed_ep, chk_id, env, scene_scope, task_scope)
+                    # compute SPL-5
+                    if env.shortest_path_terminal(ep_start[-1])>5:
+                        if env.success:
+                            spl_5_result[cur_type]['sr'] += 1
+                            spl_5_result[cur_type]['spl'] += spl
+                            spl_5_result['avg']['sr'] += 1
+                            spl_5_result['avg']['spl'] += spl
+                        spl_5_result[cur_type]['count'] += 1
+                        spl_5_result['avg']['count'] += 1
 
-                    # Save failed episode
-                    ind_failed_ep = [
-                        i for (i, ep_suc) in enumerate(ep_success) if not ep_suc]
-                    ep_rewards = np.array(ep_rewards)
-                    ep_lengths = np.array(ep_lengths)
-                    ep_collisions = np.array(ep_collisions)
-                    ep_spl = np.array(ep_spl)
-                    ep_start = np.array(ep_start)
-
-                    log.write('episode failure: %.2f%% (%d / %d)' % (
-                          100-ep_success_percent, self.config['num_episode']-len(ind_succeed_ep), self.config['num_episode']))
-
-                    ep_fail = len(ind_failed_ep)
-
-                    if ep_fail == 0:
-                        ep_fail_lost = np.nan
-                    else:
-                        # Count number of fail with 300 step
-                        ep_fail_lost = (np.count_nonzero(ep_lengths[ind_failed_ep] == ep_fail_threshold)/ep_fail)*100.0
-                        log.write('episode failure lost %d%%' % (ep_fail_lost))
-                        log.write('episode failure done %d%%' % (100-ep_fail_lost))
-
-                    scene_stats[scene_scope]["failure_lost"].append(
-                        ep_fail_lost)
-
-                    ind_done = []
-                    for ind, e in enumerate(ep_lengths):
-                        if ind in ind_failed_ep and e != ep_fail_threshold:
-                            ind_done.append(ind)
-
-                    ep_done_visible = 0
-                    for i in ind_done:
-                        env.reset()
-                        # Set start position
-                        env.current_state_id = ep_start[i]
-                        for a in ep_actions[i]:
-                            env.step(a)
-                        objects = [k.split("|")[0] for k in env.boudingbox.keys()]
-                        if task_scope['object'] in objects:
-                            ep_done_visible += 1
-                    if ind_done:
-                        ep_done_visible = (ep_done_visible / len(ind_done))*100.0
-                    log.write('episode failure done visible %d%%' % (ep_done_visible))
-                    scene_stats[scene_scope]['failure_done_visible'].append(ep_done_visible)
-
-                    log.write('')
-                    # Show failed
-                    if show:
-                        # Set number of fail to save
-                        nb_fail = 5
-
-                        # Get indice of lost agent
-                        ind_lost = []
-                        for ind, e in enumerate(ep_lengths):
-                            if ind in ind_failed_ep and e == ep_fail_threshold:
-                                ind_lost.append(ind)
-
-                        # Get indice of wrong done
-                        ind_done = []
-                        for ind, e in enumerate(ep_lengths):
-                            if ind in ind_failed_ep and e != ep_fail_threshold:
-                                ind_done.append(ind)
-
-                        # Get random 5 lost
-                        ep_failed_selec = ind_lost
-                        if len(ep_failed_selec) > nb_fail:
-                            ep_failed_selec = random.sample(ind_lost, nb_fail)
-
-                        self.save_video(ep_lengths, ep_actions, ep_start, ep_failed_selec, chk_id, env, scene_scope, task_scope, success=False)
-
-                        # Get random 5 done
-                        ep_failed_selec = ind_done
-                        if len(ep_failed_selec) > nb_fail:
-                            ep_failed_selec = random.sample(ind_done, nb_fail)
-
-                        self.save_video(ep_lengths, ep_actions, ep_start, ep_failed_selec, chk_id, env, scene_scope, task_scope, success=False)
+                    i_episode += 1
 
             log.write('\nResults (average trajectory length):')
-            for scene_scope in scene_stats:
-                log.write('%s: %.2f steps | %.3f spl | %.2f%% success | %.3f spl > 5 | %.2f%% success > 5 | %.2f%% lost | %.2f%% done visible' %
-                      (scene_scope, np.mean(scene_stats[scene_scope]["length"]), np.mean(
-                          scene_stats[scene_scope]["spl"]), np.mean(
-                          scene_stats[scene_scope]["success"]),
-                       np.mean(
-                          scene_stats[scene_scope]["spl_long"]),
-                       np.mean(
-                          scene_stats[scene_scope]["success_long"]),
-                       np.nanmean(
-                          scene_stats[scene_scope]["failure_lost"]),
-                       np.nanmean(
-                          scene_stats[scene_scope]["failure_done_visible"])))
-            # break
+            for cur_type in room_type+['avg']:
+                log.write('%s: %.4f spl |  %.2f%% success | %.4f spl-5 | %.2f%% success-5' %
+                    (cur_type,spl_result[cur_type]['spl']/spl_result[cur_type]['count'],
+                      spl_result[cur_type]['sr']/spl_result[cur_type]['count']*100,
+                      spl_5_result[cur_type]['spl']/spl_5_result[cur_type]['count'],
+                      spl_5_result[cur_type]['sr']/spl_5_result[cur_type]['count']*100))
+
 
 
 '''

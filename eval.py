@@ -6,6 +6,7 @@ import sys
 import torch
 
 from agent.evaluation import Evaluation
+from agent.evaluation_savn import Evaluation_savn
 # from agent.evaluation_att import Evaluation
 from agent.utils import populate_config
 
@@ -18,6 +19,7 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint_path', type=str, default=None)
     parser.add_argument('--show', action='store_true')
     parser.add_argument('--train', action='store_true')
+    parser.add_argument('--eval_type', type=str, default='val_known')
 
     # Use experiment.json
     parser.add_argument('--exp', '-e', type=str,
@@ -47,5 +49,9 @@ if __name__ == '__main__':
 
         exit()
 
-    t = Evaluation.load_checkpoints(args)
+    if args.eval_type == 'test_known':
+        t = Evaluation_savn.load_checkpoints(args)
+    else:
+        t = Evaluation.load_checkpoints(args)
+
     t.run(args['show'])
