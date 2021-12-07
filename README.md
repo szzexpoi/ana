@@ -4,7 +4,12 @@ This code implements the Attention-driven Navigation Agent (ANA) for target-driv
 ### Reference
 If you use our code, please cite our paper:
 ```
-TBD
+@InProceedings{ana,
+author = {Chen, Shi and Zhao, Qi},
+title = {Attention to Action: Leveraging Attention for Object Navigation},
+booktitle = {BMVC},
+year = {2021}
+}
 ```
 
 ### Disclaimer
